@@ -9,6 +9,8 @@ class MemoryStore {
     this.jackpotPool = 0;
   }
 
+  onStateChanged() {}
+
   ensureUser(userId) {
     if (!this.users.has(userId)) {
       const now = Date.now();
@@ -25,6 +27,7 @@ class MemoryStore {
         lastBonusAt: 0
       };
       this.users.set(userId, user);
+      this.onStateChanged();
     }
     return this.users.get(userId);
   }
@@ -32,7 +35,11 @@ class MemoryStore {
   getUserPoints(userId) {
     const user = this.ensureUser(userId);
     const now = Date.now();
+    const sizeBefore = user.ledger.length;
     user.ledger = user.ledger.filter((e) => e.expiresAt > now);
+    if (user.ledger.length !== sizeBefore) {
+      this.onStateChanged();
+    }
     return user.ledger.reduce((acc, e) => acc + e.delta, 0);
   }
 
@@ -48,6 +55,7 @@ class MemoryStore {
       createdAt: now,
       expiresAt: now + this.config.pointExpireHours * 3600 * 1000
     });
+    this.onStateChanged();
     return actual;
   }
 
@@ -55,7 +63,10 @@ class MemoryStore {
     const rate = this.config.jackpotPoolRate || 0;
     if (rate <= 0) return this.jackpotPool;
     const add = Math.floor(betAmount * rate);
-    if (add > 0) this.jackpotPool += add;
+    if (add > 0) {
+      this.jackpotPool += add;
+      this.onStateChanged();
+    }
     return this.jackpotPool;
   }
 
@@ -64,7 +75,10 @@ class MemoryStore {
   }
 
   resetJackpotPool() {
-    this.jackpotPool = 0;
+    if (this.jackpotPool !== 0) {
+      this.jackpotPool = 0;
+      this.onStateChanged();
+    }
   }
 
   maybeGrantBonus(userId) {
@@ -77,6 +91,7 @@ class MemoryStore {
       return false;
     this.addLedger(userId, this.config.noPointBonusPoints, "bonus");
     user.lastBonusAt = now;
+    this.onStateChanged();
     return true;
   }
 
@@ -86,6 +101,7 @@ class MemoryStore {
       bets: [],
       dedupe: new Set()
     };
+    this.onStateChanged();
   }
 
   addBet(roundId, bet) {
@@ -95,6 +111,7 @@ class MemoryStore {
       return { ok: false, reason: "duplicate" };
     this.currentRound.dedupe.add(bet.sourceMsgId);
     this.currentRound.bets.push(bet);
+    this.onStateChanged();
     return { ok: true };
   }
 
@@ -102,8 +119,14 @@ class MemoryStore {
     return this.currentRound;
   }
 
+  touchCurrentRound() {
+    if (!this.currentRound) return;
+    this.onStateChanged();
+  }
+
   setLastResult(result) {
     this.lastResult = result;
+    this.onStateChanged();
   }
 
   getLastResult() {

@@ -21,6 +21,8 @@ class RoundEngine {
     this.respinSlots = respinSlots;
     this.broadcaster = broadcaster;
     this.roundId = 0;
+    this.closeBetTimer = null;
+    this.nextRoundTimer = null;
   }
 
   start() {
@@ -29,7 +31,10 @@ class RoundEngine {
 
   placeBet({ userId, slotId, amount, sourceMsgId }) {
     const round = this.store.getCurrentRound();
-    if (!round || round.status !== "betting") {
+    if (
+      !round ||
+      (round.status !== "waiting_bets" && round.status !== "betting")
+    ) {
       return { ok: false, reason: "bet_closed" };
     }
     const safeSlot = Number.parseInt(slotId, 10);
@@ -55,6 +60,11 @@ class RoundEngine {
     if (!result.ok) return result;
     this.store.addLedger(userId, -betAmount, "bet");
     const jackpotPool = this.store.addJackpotContribution(betAmount);
+
+    if (round.status === "waiting_bets") {
+      this._activateBettingWindow(round);
+    }
+
     this.broadcaster({
       type: "bet_accepted",
       roundId: round.id,
@@ -67,15 +77,42 @@ class RoundEngine {
   }
 
   _startRound() {
+    if (this.closeBetTimer) {
+      clearTimeout(this.closeBetTimer);
+      this.closeBetTimer = null;
+    }
+    if (this.nextRoundTimer) {
+      clearTimeout(this.nextRoundTimer);
+      this.nextRoundTimer = null;
+    }
+
     this.roundId += 1;
     const now = Date.now();
     const round = {
       id: this.roundId,
-      status: "betting",
+      status: "waiting_bets",
       startTime: now,
-      betDeadline: now + this.config.betWindowSec * 1000
+      betDeadline: 0
     };
     this.store.createRound(round);
+    this.broadcaster({
+      type: "round_waiting_bets",
+      roundId: round.id,
+      waitingSince: now
+    });
+  }
+
+  _activateBettingWindow(round) {
+    if (!round || round.status !== "waiting_bets") return;
+
+    const now = Date.now();
+    round.status = "betting";
+    round.betStartTime = now;
+    round.betDeadline = now + this.config.betWindowSec * 1000;
+    if (typeof this.store.touchCurrentRound === "function") {
+      this.store.touchCurrentRound();
+    }
+
     this.broadcaster({
       type: "round_started",
       roundId: round.id,
@@ -83,13 +120,37 @@ class RoundEngine {
       betWindowSec: this.config.betWindowSec
     });
 
-    setTimeout(() => this._closeBetting(round.id), this.config.betWindowSec * 1000);
+    if (this.closeBetTimer) clearTimeout(this.closeBetTimer);
+    const closeDelayMs = Math.max(0, this.config.betWindowSec * 1000);
+    this.closeBetTimer = setTimeout(() => {
+      this.closeBetTimer = null;
+      this._closeBetting(round.id);
+    }, closeDelayMs);
   }
 
   _closeBetting(roundId) {
     const round = this.store.getCurrentRound();
-    if (!round || round.id !== roundId) return;
+    if (!round || round.id !== roundId || round.status !== "betting") return;
+
+    if (!Array.isArray(round.bets) || round.bets.length === 0) {
+      round.status = "waiting_bets";
+      round.betDeadline = 0;
+      if (typeof this.store.touchCurrentRound === "function") {
+        this.store.touchCurrentRound();
+      }
+      this.broadcaster({
+        type: "round_waiting_bets",
+        roundId: round.id,
+        waitingSince: Date.now(),
+        reason: "no_valid_bet"
+      });
+      return;
+    }
+
     round.status = "spinning";
+    if (typeof this.store.touchCurrentRound === "function") {
+      this.store.touchCurrentRound();
+    }
 
     const markerCount = pickMarkerCount(
       this.config.markerCounts,
@@ -150,8 +211,23 @@ class RoundEngine {
 
   _settleRound(roundId) {
     const round = this.store.getCurrentRound();
-    if (!round || round.id !== roundId) return;
+    if (!round || round.id !== roundId || round.status !== "spinning") return;
     round.status = "settled";
+    if (typeof this.store.touchCurrentRound === "function") {
+      this.store.touchCurrentRound();
+    }
+
+    const participants = new Set(round.bets.map((b) => b.userId));
+    const pointsBeforeSettle = new Map();
+    participants.forEach((userId) => {
+      pointsBeforeSettle.set(userId, this.store.getUserPoints(userId));
+    });
+
+    const winDeltaByUser = new Map();
+    const addWinDelta = (userId, delta) => {
+      if (!userId || !Number.isFinite(delta) || delta <= 0) return;
+      winDeltaByUser.set(userId, (winDeltaByUser.get(userId) || 0) + delta);
+    };
 
     const winSlotsMain = round.spin.finalSlots;
     const payoutsMain = this.payoutEngine.applyBets(
@@ -159,6 +235,7 @@ class RoundEngine {
       winSlotsMain,
       "win"
     );
+    payoutsMain.forEach((item) => addWinDelta(item.userId, item.delta));
 
     const payoutsRespins = [];
     for (const respin of round.respins) {
@@ -168,6 +245,7 @@ class RoundEngine {
         "respin"
       );
       payoutsRespins.push(...payouts);
+      payouts.forEach((item) => addWinDelta(item.userId, item.delta));
     }
 
     const jackpotWinners = round.bets.filter(
@@ -176,6 +254,7 @@ class RoundEngine {
         bet.slotId === this.jackpotSlots.small
     );
     let jackpotPoolPaid = 0;
+    const jackpotPoolPayouts = [];
     if (jackpotWinners.length > 0) {
       const pool = this.store.getJackpotPool();
       if (pool > 0) {
@@ -193,16 +272,41 @@ class RoundEngine {
           if (share > 0) {
             this.store.addLedger(bet.userId, share, "jackpot_pool");
             jackpotPoolPaid += share;
+            jackpotPoolPayouts.push({
+              userId: bet.userId,
+              delta: share
+            });
+            addWinDelta(bet.userId, share);
           }
         });
         this.store.resetJackpotPool();
       }
     }
 
-    const participants = new Set(round.bets.map((b) => b.userId));
     for (const userId of participants) {
       this.store.maybeGrantBonus(userId);
     }
+
+    const settlementHighlights = [];
+    participants.forEach((userId) => {
+      const winPoints = winDeltaByUser.get(userId) || 0;
+      if (winPoints <= 0) return;
+      settlementHighlights.push({
+        userId,
+        pointsBefore: pointsBeforeSettle.get(userId) || 0,
+        winPoints,
+        pointsAfter: this.store.getUserPoints(userId)
+      });
+    });
+    settlementHighlights.sort((a, b) => {
+      if (b.winPoints !== a.winPoints) return b.winPoints - a.winPoints;
+      if (b.pointsAfter !== a.pointsAfter) return b.pointsAfter - a.pointsAfter;
+      return String(a.userId).localeCompare(String(b.userId));
+    });
+    const maxHighlights = Math.max(
+      1,
+      Number.parseInt(this.config.settlementHighlightLimit, 10) || 12
+    );
 
     const leaderboard = this.store.getLeaderboard(this.config.leaderboardLimit);
     const result = {
@@ -212,7 +316,9 @@ class RoundEngine {
       respins: round.respins,
       payoutsMain,
       payoutsRespins,
+      jackpotPoolPayouts,
       jackpotPoolPaid,
+      settlementHighlights: settlementHighlights.slice(0, maxHighlights),
       settledAt: Date.now()
     };
     this.store.setLastResult(result);
@@ -222,13 +328,16 @@ class RoundEngine {
       roundId: round.id,
       result,
       jackpotPool: this.store.getJackpotPool(),
-      leaderboard
+      leaderboard,
+      settlementHighlights: result.settlementHighlights,
+      autoNextRoundInSec: this.config.settlePauseSec
     });
 
-    setTimeout(
-      () => this._startRound(),
-      this.config.roundIntervalSec * 1000
-    );
+    const settlePauseMs = Math.max(0, this.config.settlePauseSec * 1000);
+    this.nextRoundTimer = setTimeout(() => {
+      this.nextRoundTimer = null;
+      this._startRound();
+    }, settlePauseMs);
   }
 }
 

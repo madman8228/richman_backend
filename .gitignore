@@ -30,6 +30,7 @@ build/
 .cache/
 tmp/
 temp/
+data/
 
 # OS
 .DS_Store

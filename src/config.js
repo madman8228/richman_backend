@@ -1,4 +1,5 @@
 const dotenv = require("dotenv");
+const path = require("path");
 
 dotenv.config();
 
@@ -41,10 +42,20 @@ const toSlots = (val) => {
 const config = {
   port: toInt(process.env.PORT, 3000),
   appMode: process.env.APP_MODE || "local",
+  storeMode: (process.env.STORE_MODE || "file").toLowerCase(),
+  storeFilePath: path.resolve(
+    process.env.STORE_FILE_PATH || path.join(process.cwd(), "data", "store.json")
+  ),
+  allowLocalSimulator: toBool(
+    process.env.ALLOW_LOCAL_SIMULATOR,
+    process.env.APP_MODE !== "production"
+  ),
   publicDir: process.env.PUBLIC_DIR || "",
   betWindowSec: toInt(process.env.BET_WINDOW_SEC, 10),
   roundIntervalSec: toInt(process.env.ROUND_INTERVAL_SEC, 15),
   spinDurationSec: toInt(process.env.SPIN_DURATION_SEC, 6),
+  settlePauseSec: toInt(process.env.SETTLE_PAUSE_SEC, 3),
+  settlementHighlightLimit: toInt(process.env.SETTLEMENT_HIGHLIGHT_LIMIT, 12),
   spinDirectionMode: process.env.SPIN_DIRECTION_MODE || "clockwise",
   gridRows: toInt(process.env.GRID_ROWS, 11),
   gridCols: toInt(process.env.GRID_COLS, 11),

@@ -6,7 +6,10 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js"
+    "dev": "node src/server.js",
+    "sim:stream": "node scripts/sim-danmu-stream.js",
+    "init:store": "node scripts/init-store.js",
+    "test": "node --test tests"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
