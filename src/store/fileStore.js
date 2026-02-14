@@ -57,7 +57,21 @@ class FileStore extends MemoryStore {
       users.set(id, {
         id,
         ledger,
-        lastBonusAt: Number.parseInt(data?.lastBonusAt, 10) || 0
+        lastBonusAt: Number.parseInt(data?.lastBonusAt, 10) || 0,
+        lastBetPlan: Array.isArray(data?.lastBetPlan)
+          ? data.lastBetPlan
+              .map((item) => ({
+                slotId: Number.parseInt(item?.slotId, 10),
+                amount: Number.parseInt(item?.amount, 10)
+              }))
+              .filter(
+                (item) =>
+                  Number.isFinite(item.slotId) &&
+                  item.slotId >= 0 &&
+                  Number.isFinite(item.amount) &&
+                  item.amount > 0
+              )
+          : []
       });
     });
 
@@ -94,7 +108,8 @@ class FileStore extends MemoryStore {
       users[id] = {
         id,
         ledger: user.ledger,
-        lastBonusAt: user.lastBonusAt || 0
+        lastBonusAt: user.lastBonusAt || 0,
+        lastBetPlan: Array.isArray(user.lastBetPlan) ? user.lastBetPlan : []
       };
     });
 
@@ -122,4 +137,3 @@ class FileStore extends MemoryStore {
 module.exports = {
   FileStore
 };
-

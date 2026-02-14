@@ -24,7 +24,8 @@ class MemoryStore {
             expiresAt: now + this.config.pointExpireHours * 3600 * 1000
           }
         ],
-        lastBonusAt: 0
+        lastBonusAt: 0,
+        lastBetPlan: []
       };
       this.users.set(userId, user);
       this.onStateChanged();
@@ -113,6 +114,38 @@ class MemoryStore {
     this.currentRound.bets.push(bet);
     this.onStateChanged();
     return { ok: true };
+  }
+
+  setLastBetPlan(userId, plan) {
+    const user = this.ensureUser(userId);
+    if (!Array.isArray(plan)) {
+      user.lastBetPlan = [];
+      this.onStateChanged();
+      return;
+    }
+    user.lastBetPlan = plan
+      .map((item) => ({
+        slotId: Number.parseInt(item?.slotId, 10),
+        amount: Number.parseInt(item?.amount, 10)
+      }))
+      .filter(
+        (item) =>
+          Number.isFinite(item.slotId) &&
+          item.slotId >= 0 &&
+          Number.isFinite(item.amount) &&
+          item.amount > 0
+      );
+    this.onStateChanged();
+  }
+
+  getLastBetPlan(userId) {
+    const user = this.ensureUser(userId);
+    return Array.isArray(user.lastBetPlan)
+      ? user.lastBetPlan.map((item) => ({
+          slotId: item.slotId,
+          amount: item.amount
+        }))
+      : [];
   }
 
   getCurrentRound() {
