@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "richman-runner",
   "version": "0.1.0",
   "private": true,
@@ -9,7 +9,7 @@
     "dev": "node src/server.js",
     "sim:stream": "node scripts/sim-danmu-stream.js",
     "init:store": "node scripts/init-store.js",
-    "test": "node --test tests"
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
@@ -17,3 +17,4 @@
     "ws": "^8.17.1"
   }
 }
+

@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -18,6 +18,7 @@ const resolvePublicDir = () => {
   const candidates = [
     config.publicDir,
     path.join(__dirname, "..", "public"),
+    path.join(__dirname, "..", "..", "richman", "public"),
     path.join(__dirname, "..", "..", "RichMan", "public")
   ].filter(Boolean);
 
@@ -95,7 +96,17 @@ wss.on("connection", (ws) => {
       settlePauseSec: config.settlePauseSec,
       normalMult: config.normalMult,
       jackpotSmallMult: config.jackpotSmallMult,
-      jackpotBigMult: config.jackpotBigMult
+      jackpotBigMult: config.jackpotBigMult,
+      slotMultipliers: config.slotMultipliers,
+      slotMultipliersStrict: config.slotMultipliersStrict,
+      poolJackpotEnabled: config.poolJackpotEnabled,
+      poolJackpotSlot: config.poolJackpotSlot,
+      poolJackpotRequireHit: config.poolJackpotRequireHit,
+      poolJackpotKeepBaseMult: config.poolJackpotKeepBaseMult,
+      quickBetGuideEnabled: config.quickBetGuideEnabled,
+      quickBetGuideTitle: config.quickBetGuideTitle,
+      quickBetGuideExamples: config.quickBetGuideExamples,
+      roundModes: config.roundModes
     }
   };
   ws.send(JSON.stringify(initPayload));
@@ -129,7 +140,7 @@ app.get("/api/leaderboard", (req, res) => {
 
 if (config.allowLocalSimulator) {
   const parseBetInput = (body = {}) => {
-    const userId = body.userId || `u${Math.floor(Math.random() * 1000000)}`;
+    const userId = String(body.userId || `u${Math.floor(Math.random() * 1000000)}`);
     const rawSlot = Number.parseInt(body.slotId, 10);
     const slotId = Number.isFinite(rawSlot)
       ? rawSlot
@@ -138,11 +149,34 @@ if (config.allowLocalSimulator) {
     const amount = Number.isFinite(rawAmount) && rawAmount > 0
       ? rawAmount
       : Math.floor(Math.random() * 10) + 1;
+    const reuseLastBet =
+      body.reuseLastBet === true ||
+      body.reuseLastBet === 1 ||
+      body.reuseLastBet === "1" ||
+      body.reuseLastBet === "true" ||
+      body.slotId === "0" ||
+      body.command === "reuse_last";
+    const betPlan = Array.isArray(body.bets)
+      ? body.bets
+          .map((item) => ({
+            slotId: Number.parseInt(item?.slotId, 10),
+            amount: Number.parseInt(item?.amount, 10)
+          }))
+          .filter(
+            (item) =>
+              Number.isFinite(item.slotId) &&
+              item.slotId >= 0 &&
+              Number.isFinite(item.amount) &&
+              item.amount > 0
+          )
+      : undefined;
     return {
       userId,
       slotId,
       amount,
-      sourceMsgId: body.sourceMsgId
+      sourceMsgId: body.sourceMsgId,
+      reuseLastBet,
+      betPlan
     };
   };
 
@@ -217,3 +251,6 @@ server.listen(config.port, () => {
     }`
   );
 });
+
+
+
